@@ -189,7 +189,6 @@ if __name__ == '__main__':
     if args.mode=="ldada":
         from generate_domains import generate_domains
         domain_probs = generate_domains(args.num_domains,dataset_loaders["train"], args.cluster_ckpt, device)
-
     for iter_num in range(1, args.max_iteration + 1):
         my_fine_net.train(True)
         optimizer = inv_lr_scheduler(param_lr, optimizer, iter_num, init_lr=args.lr, gamma=0.001, power=0.75)
@@ -221,7 +220,7 @@ if __name__ == '__main__':
             transfer_loss = transfer_loss*args.msda_wt
         elif args.mode=="ldada":
             batch_domain_probs = domain_probs[idxes_src].to(device)
-            transfer_loss = msda.msda_regulizer_soft(features_src, features_tgt, 5, domain_probs)
+            transfer_loss = msda.msda_regulizer_soft(features_src, features_tgt, 5, batch_domain_probs)
             transfer_loss = transfer_loss * args.msda_wt
         else:
             transfer_loss = torch.zeros(1,dtype=torch.float32).to(device)

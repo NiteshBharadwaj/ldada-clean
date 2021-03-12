@@ -254,3 +254,56 @@ class Inceptionv3Fc(nn.Module):
 
   def output_num(self):
     return self.__in_features
+
+
+class DomainPredictor(nn.Module):
+    def __init__(self, num_domains, prob=0.5, classaware_dp=False):
+        super(DomainPredictor, self).__init__()
+        self.dp_model = Resnet50Fc()
+        self.classaware_dp=classaware_dp
+        for param in self.dp_model.conv1.parameters():
+            param.requires_grad = False
+        for param in self.dp_model.bn1.parameters():
+            param.requires_grad = False
+        for param in self.dp_model.layer1.parameters():
+            param.requires_grad = True
+        for param in self.dp_model.layer2.parameters():
+            param.requires_grad = True
+        self.inp_layer = 2048 if classaware_dp else 2048
+        self.fc5 = nn.Linear(self.inp_layer, 128)
+        self.bn_fc5 = nn.BatchNorm1d(128)
+        self.dp_layer = nn.Linear(128, num_domains)
+
+        self.prob = prob
+        self.num_domains = num_domains
+
+        self.relu = nn.ReLU(inplace=True)
+
+    def set_lambda(self, lambd):
+        self.lambd = lambd
+
+    def forward(self, x, reverse=False):
+        if not self.classaware_dp:
+            x = self.dp_model.conv1(x)
+            x = self.dp_model.bn1(x)
+            x = self.dp_model.relu(x)
+            x = self.dp_model.maxpool(x)
+
+            x = self.dp_model.layer1(x)
+            x = self.dp_model.layer2(x)
+
+            x = self.dp_model.layer3(x)
+            x = self.dp_model.layer4(x)
+            x = self.dp_model.avgpool(x)
+            #import pdb
+            #pdb.set_trace()
+            x = x.view(x.size(0), -1)
+
+        x = self.relu(self.bn_fc5(self.fc5(x)))
+
+        #x = self.avgpool(x)
+        #x = x.view(x.shape[0],-1)
+        #x = self.relu(self.bn_fc4(self.fc4(x)))
+
+        dp_pred = self.dp_layer(x)
+        return dp_pred
