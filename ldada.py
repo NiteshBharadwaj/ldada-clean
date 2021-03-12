@@ -105,6 +105,9 @@ if __name__ == '__main__':
     parser.add_argument('--max_iteration', type=float, nargs='?', default=12500, help="target dataset")
     parser.add_argument('--smooth_stratege', type=str, nargs='?', default='e', help="smooth stratege")
 
+    parser.add_argument('--cluster_ckpt', type=str, nargs='?', default='', help="Checkpoint for cluster probabilities")
+    parser.add_argument('--num_domains', type=int, nargs='?', default=3, help="num_domains")
+
     args = parser.parse_args()
 
 
@@ -183,7 +186,9 @@ if __name__ == '__main__':
     len_target = len(dataset_loaders["val"]) - 1
     iter_source = iter(dataset_loaders["train"])
     iter_target = iter(dataset_loaders["val"])
-
+    if args.mode=="ldada":
+        from generate_domains import generate_domains
+        domain_probs = generate_domains(args.num_domains,dataset_loaders["train"], args.cluster_ckpt, device)
 
     for iter_num in range(1, args.max_iteration + 1):
         my_fine_net.train(True)
@@ -196,13 +201,14 @@ if __name__ == '__main__':
             iter_target = iter(dataset_loaders["val"])
         data_source = iter_source.next()
         data_target = iter_target.next()
-        inputs_source, labels_source = data_source
-        inputs_target, labels_target = data_target
+        inputs_source, labels_source, idxes_src = data_source
+        inputs_target, labels_target, idxes_tgt = data_target
         inputs = torch.cat((inputs_source, inputs_target), dim=0)
         inputs = inputs.to(device)
 
         fine_labels_source_cpu = labels_source.view(-1, 1)
         labels_source = labels_source.to(device)
+        idxes_src = idxes_src.long().to(device)
 
         if args.msda_raw_feat:
             features_btnk, logits_fine, _ = my_fine_net(inputs)
@@ -213,8 +219,12 @@ if __name__ == '__main__':
         if args.mode=="msda":
             transfer_loss = msda.msda_regulizer_single(features_src, features_tgt, 5)
             transfer_loss = transfer_loss*args.msda_wt
+        elif args.mode=="ldada":
+            batch_domain_probs = domain_probs[idxes_src].to(device)
+            transfer_loss = msda.msda_regulizer_soft(features_src, features_tgt, 5, domain_probs)
+            transfer_loss = transfer_loss * args.msda_wt
         else:
-            transfer_loss = torch.zeros(1,dtype=torch.float32).cuda()
+            transfer_loss = torch.zeros(1,dtype=torch.float32).to(device)
         logits_fine_source = logits_fine.narrow(0, 0, batch_size["train"])
         fine_labels_onehot = torch.zeros(logits_fine_source.size()).scatter_(1, fine_labels_source_cpu, 1)
         fine_labels_onehot = fine_labels_onehot.to(device)
