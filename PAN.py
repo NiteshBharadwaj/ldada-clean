@@ -23,7 +23,6 @@ def test_target(loader, model):
             for j in range(10):
                 inputs[j] = inputs[j].to(device)
             labels = labels.to(device)
-            labels = labels[:, 0]
             outputs = []
             for j in range(10):
                 _, output = model(inputs[j])
@@ -95,6 +94,7 @@ if __name__ == '__main__':
     parser.add_argument('--entropy_source', type=float, nargs='?', default=0, help="target dataset")
     parser.add_argument('--entropy_target', type=float, nargs='?', default=0.01, help="target dataset")
     parser.add_argument('--lr', type=float, nargs='?', default=0.03, help="target dataset")
+    parser.add_argument('--num_workers', type=int, nargs='?', default=10, help="num_workers")
     parser.add_argument('--initial_smooth', type=float, nargs='?', default=0.9, help="target dataset")
     parser.add_argument('--final_smooth', type=float, nargs='?', default=0.1, help="target dataset")
     parser.add_argument('--max_iteration', type=float, nargs='?', default=12500, help="target dataset")
@@ -110,9 +110,9 @@ if __name__ == '__main__':
 
     # file paths and domains
     file_path = {
-    "i": " / vulcan - pvc1 / ml_for_da_pan_base / dataset_list / bird31_ina_list_2017.txt",  # NOT AVAILABLE
-    "n": " / vulcan - pvc1 / ml_for_da_pan_base / dataset_list / bird31_nabirds_list.txt",
-    "c": " / vulcan - pvc1 / ml_for_da_pan_base / dataset_list / bird31_cub2011.txt"
+    "i": "/vulcan-pvc1/ml_for_da_pan_base/dataset_list/bird31_ina_list_2017.txt",  # NOT AVAILABLE
+    "n": "/vulcan-pvc1/ml_for_da_pan_base/dataset_list/bird31_nabirds_list.txt",
+    "c": "/vulcan-pvc1/ml_for_da_pan_base/dataset_list/bird31_cub2011.txt"
     #         "pai":"/vulcan-pvc1/ml_for_da_pan_base/dataset_list/cub200_drawing_20.txt",
     #         "cub":"/vulcan-pvc1/ml_for_da_pan_base/dataset_list/cub200_2011_20.txt"
     }
@@ -130,18 +130,18 @@ if __name__ == '__main__':
     dataset_loaders = {}
 
     dataset_list = ImageList(open(dataset_source).readlines(), transform=prep.image_train(resize_size=256, crop_size=224))
-    dataset_loaders["train"] = torch.utils.data.DataLoader(dataset_list, batch_size=36, shuffle=True, num_workers=4)
+    dataset_loaders["train"] = torch.utils.data.DataLoader(dataset_list, batch_size=36, shuffle=True, num_workers=args.num_workers)
 
     dataset_list = ImageList(open(dataset_target).readlines(), transform=prep.image_train(resize_size=256, crop_size=224))
-    dataset_loaders["val"] = torch.utils.data.DataLoader(dataset_list, batch_size=36, shuffle=True, num_workers=4)
+    dataset_loaders["val"] = torch.utils.data.DataLoader(dataset_list, batch_size=36, shuffle=True, num_workers=args.num_workers)
 
     dataset_list = ImageList(open(dataset_test).readlines(), transform=prep.image_train(resize_size=256, crop_size=224))
-    dataset_loaders["test"] = torch.utils.data.DataLoader(dataset_list, batch_size=4, shuffle=False, num_workers=4)
+    dataset_loaders["test"] = torch.utils.data.DataLoader(dataset_list, batch_size=4, shuffle=False, num_workers=args.num_workers)
 
     prep_dict_test = prep.image_test_10crop(resize_size=256, crop_size=224)
     for i in range(10):
         dataset_list = ImageList(open(dataset_test).readlines(), transform=prep_dict_test["val" + str(i)])
-        dataset_loaders["val" + str(i)] = torch.utils.data.DataLoader(dataset_list, batch_size=4, shuffle=False, num_workers=4)
+        dataset_loaders["val" + str(i)] = torch.utils.data.DataLoader(dataset_list, batch_size=4, shuffle=False, num_workers=6)
 
     # network construction
     feature_len = 2048
@@ -196,7 +196,7 @@ if __name__ == '__main__':
         inputs = torch.cat((inputs_source, inputs_target), dim=0)
         inputs = inputs.to(device)
 
-        fine_labels_source_cpu = labels_source[:, 0].view(-1, 1)
+        fine_labels_source_cpu = labels_source.view(-1, 1)
         labels_source = labels_source.to(device)
         domain_labels = torch.from_numpy(np.array([[1], ] * batch_size["train"] + [[0], ] * batch_size["train"])).float()
         domain_labels = domain_labels.to(device)
@@ -224,6 +224,8 @@ if __name__ == '__main__':
 
         # test
         test_interval = 500
+        if iter_num%10==0:
+            print(iter_num)
         if iter_num % test_interval == 0:
             my_fine_net.eval()
             test_acc = test_target(dataset_loaders, my_fine_net)
