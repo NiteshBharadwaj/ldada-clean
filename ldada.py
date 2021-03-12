@@ -26,7 +26,7 @@ def test_target(loader, model):
             labels = labels.to(device)
             outputs = []
             for j in range(10):
-                _, output = model(inputs[j])
+                _, output, _ = model(inputs[j])
                 outputs.append(output)
             outputs = sum(outputs)
             if start_test:
@@ -84,7 +84,7 @@ class fine_net(nn.Module):
         features = self.model_fc(x)
         out_bottleneck = self.bottleneck_layer(features)
         logits = self.classifier_layer(out_bottleneck)
-        return(out_bottleneck, logits, self.bn(logits))
+        return(out_bottleneck, logits, self.bn(out_bottleneck))
 
 
 if __name__ == '__main__':
@@ -233,7 +233,7 @@ if __name__ == '__main__':
         train_entropy_loss_source += entropy_loss_source.item()
         train_entropy_loss_target += entropy_loss_target.item()
         train_total_loss += total_loss.item()
-        transfer_loss += transfer_loss.item()
+        train_transfer_loss += transfer_loss.item()
 
         # test
         test_interval = 500
