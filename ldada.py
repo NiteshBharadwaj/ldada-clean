@@ -9,6 +9,7 @@ import argparse
 from data_list import ImageList
 import pre_process as prep
 import math
+import msda
 
 torch.set_num_threads(1)
 
@@ -77,12 +78,13 @@ class fine_net(nn.Module):
         self.bottleneck_0.bias.data.fill_(0.1)
         self.bottleneck_layer = nn.Sequential(self.bottleneck_0, nn.ReLU(), nn.Dropout(0.5))
         self.classifier_layer = predictor(256, cate_all[0])
+        self.bn = nn.BatchNorm1d(256,affine=False)
 
     def forward(self,x):
         features = self.model_fc(x)
         out_bottleneck = self.bottleneck_layer(features)
         logits = self.classifier_layer(out_bottleneck)
-        return(out_bottleneck, logits)
+        return(out_bottleneck, logits, self.bn(logits))
 
 
 if __name__ == '__main__':
@@ -93,6 +95,9 @@ if __name__ == '__main__':
     parser.add_argument('--target', type=str, nargs='?', default='p', help="target dataset")
     parser.add_argument('--entropy_source', type=float, nargs='?', default=0, help="target dataset")
     parser.add_argument('--entropy_target', type=float, nargs='?', default=0.01, help="target dataset")
+    parser.add_argument('--mode', type=str, nargs='?', default='msda', help="msda/ldada/baseline")
+    parser.add_argument('--msda_wt', type=float, nargs='?', default=0.001, help="target dataset")
+    parser.add_argument('--msda_raw_feat',action='store_true',default=False,help="MSDA on raw feats or bn feats")
     parser.add_argument('--lr', type=float, nargs='?', default=0.03, help="target dataset")
     parser.add_argument('--num_workers', type=int, nargs='?', default=10, help="num_workers")
     parser.add_argument('--initial_smooth', type=float, nargs='?', default=0.9, help="target dataset")
@@ -198,10 +203,18 @@ if __name__ == '__main__':
 
         fine_labels_source_cpu = labels_source.view(-1, 1)
         labels_source = labels_source.to(device)
-        domain_labels = torch.from_numpy(np.array([[1], ] * batch_size["train"] + [[0], ] * batch_size["train"])).float()
-        domain_labels = domain_labels.to(device)
 
-        features_btnk, logits_fine = my_fine_net(inputs)
+        if args.msda_raw_feat:
+            features_btnk, logits_fine, _ = my_fine_net(inputs)
+        else:
+            _, logits_fine,features_btnk = my_fine_net(inputs)
+        features_src = features_btnk.narrow(0, 0, batch_size["train"])
+        features_tgt = features_btnk.narrow(0, batch_size["train"], batch_size["train"])
+        if args.mode=="msda":
+            transfer_loss = msda.msda_regulizer_single(features_src, features_tgt, 5)
+            transfer_loss = transfer_loss*args.msda_wt
+        else:
+            transfer_loss = torch.zeros(1,dtype=torch.float32).cuda()
         logits_fine_source = logits_fine.narrow(0, 0, batch_size["train"])
         fine_labels_onehot = torch.zeros(logits_fine_source.size()).scatter_(1, fine_labels_source_cpu, 1)
         fine_labels_onehot = fine_labels_onehot.to(device)
@@ -211,7 +224,7 @@ if __name__ == '__main__':
         classifier_loss = fine_classifier_loss
         entropy_loss_source = entropy_loss_func(nn.Softmax(dim=1)(logits_fine.narrow(0, 0, batch_size["train"])))
         entropy_loss_target = entropy_loss_func(nn.Softmax(dim=1)(logits_fine.narrow(0, batch_size["train"], batch_size["train"])))
-        total_loss = classifier_loss + entropy_loss_source * args.entropy_source + entropy_loss_target * args.entropy_target
+        total_loss = classifier_loss + transfer_loss + entropy_loss_source * args.entropy_source + entropy_loss_target * args.entropy_target
 
         total_loss.backward()
         optimizer.step()
@@ -220,7 +233,7 @@ if __name__ == '__main__':
         train_entropy_loss_source += entropy_loss_source.item()
         train_entropy_loss_target += entropy_loss_target.item()
         train_total_loss += total_loss.item()
-
+        transfer_loss += transfer_loss.item()
 
         # test
         test_interval = 500
