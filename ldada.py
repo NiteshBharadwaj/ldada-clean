@@ -10,6 +10,7 @@ from data_list import ImageList
 import pre_process as prep
 import math
 import msda
+import mmd
 
 torch.set_num_threads(1)
 
@@ -95,7 +96,7 @@ if __name__ == '__main__':
     parser.add_argument('--target', type=str, nargs='?', default='p', help="target dataset")
     parser.add_argument('--entropy_source', type=float, nargs='?', default=0, help="target dataset")
     parser.add_argument('--entropy_target', type=float, nargs='?', default=0.01, help="target dataset")
-    parser.add_argument('--mode', type=str, nargs='?', default='msda', help="msda/ldada/baseline")
+    parser.add_argument('--mode', type=str, nargs='?', default='msda', help="msda/ldada/baseline/mmd/mmd_soft")
     parser.add_argument('--msda_wt', type=float, nargs='?', default=0.001, help="target dataset")
     parser.add_argument('--msda_raw_feat',action='store_true',default=False,help="MSDA on raw feats or bn feats")
     parser.add_argument('--lr', type=float, nargs='?', default=0.03, help="target dataset")
@@ -227,6 +228,12 @@ if __name__ == '__main__':
         elif args.mode=="ldada":
             batch_domain_probs = domain_probs[idxes_src].to(device)
             transfer_loss = msda.msda_regulizer_soft(features_src, features_tgt, 5, batch_domain_probs)
+            transfer_loss = transfer_loss * args.msda_wt
+        elif args.mode=="mmd":
+            transfer_loss = mmd.mmd(features_src, features_tgt)
+            transfer_loss = transfer_loss * args.msda_wt
+        elif args.mode=="mmd_soft":
+            transfer_loss = mmd.mmd_soft(features_src, features_tgt,batch_domain_probs)
             transfer_loss = transfer_loss * args.msda_wt
         else:
             transfer_loss = torch.zeros(1,dtype=torch.float32).to(device)
