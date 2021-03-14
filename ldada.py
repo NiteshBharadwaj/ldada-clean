@@ -13,7 +13,7 @@ import msda
 
 torch.set_num_threads(1)
 
-def test_target(loader, model):
+def test_target(loader, model, model_fc):
     with torch.no_grad():
         start_test = True
         iter_val = [iter(loader['val'+str(i)]) for i in range(10)]
@@ -26,7 +26,8 @@ def test_target(loader, model):
             labels = labels.to(device)
             outputs = []
             for j in range(10):
-                _, output, _ = model(inputs[j])
+                features = model_fc(inputs[j])
+                _, output, _ = model(features)
                 outputs.append(output)
             outputs = sum(outputs)
             if start_test:
@@ -72,7 +73,6 @@ class predictor(nn.Module):
 class fine_net(nn.Module):
     def __init__(self, feature_len):
         super(fine_net,self).__init__()
-        self.model_fc = model_no.Resnet50Fc()
         self.bottleneck_0 = nn.Linear(feature_len, 256)
         self.bottleneck_0.weight.data.normal_(0, 0.005)
         self.bottleneck_0.bias.data.fill_(0.1)
@@ -80,8 +80,8 @@ class fine_net(nn.Module):
         self.classifier_layer = predictor(256, cate_all[0])
         self.bn = nn.BatchNorm1d(256,affine=False)
 
-    def forward(self,x):
-        features = self.model_fc(x)
+    def forward(self,features):
+        #features = self.model_fc(x)
         out_bottleneck = self.bottleneck_layer(features)
         logits = self.classifier_layer(out_bottleneck)
         return(out_bottleneck, logits, self.bn(out_bottleneck))
@@ -100,6 +100,7 @@ if __name__ == '__main__':
     parser.add_argument('--msda_raw_feat',action='store_true',default=False,help="MSDA on raw feats or bn feats")
     parser.add_argument('--lr', type=float, nargs='?', default=0.03, help="target dataset")
     parser.add_argument('--num_workers', type=int, nargs='?', default=10, help="num_workers")
+    parser.add_argument('--batch_size', type=int, nargs='?', default=36, help="num_workers")
     parser.add_argument('--initial_smooth', type=float, nargs='?', default=0.9, help="target dataset")
     parser.add_argument('--final_smooth', type=float, nargs='?', default=0.1, help="target dataset")
     parser.add_argument('--max_iteration', type=float, nargs='?', default=12500, help="target dataset")
@@ -112,7 +113,7 @@ if __name__ == '__main__':
 
 
     # device assignment
-    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_id
+    #os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_id
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 
@@ -131,17 +132,17 @@ if __name__ == '__main__':
     cate_all = [31]
 
     # dataset load
-    batch_size = {"train": 36, "val": 36, "test": 4}
+    batch_size = {"train": args.batch_size, "val": args.batch_size, "test": 4}
     for i in range(10):
         batch_size["val" + str(i)] = 4
 
     dataset_loaders = {}
 
     dataset_list = ImageList(open(dataset_source).readlines(), transform=prep.image_train(resize_size=256, crop_size=224))
-    dataset_loaders["train"] = torch.utils.data.DataLoader(dataset_list, batch_size=36, shuffle=True, num_workers=args.num_workers)
+    dataset_loaders["train"] = torch.utils.data.DataLoader(dataset_list, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
 
     dataset_list = ImageList(open(dataset_target).readlines(), transform=prep.image_train(resize_size=256, crop_size=224))
-    dataset_loaders["val"] = torch.utils.data.DataLoader(dataset_list, batch_size=36, shuffle=True, num_workers=args.num_workers)
+    dataset_loaders["val"] = torch.utils.data.DataLoader(dataset_list, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
 
     dataset_list = ImageList(open(dataset_test).readlines(), transform=prep.image_train(resize_size=256, crop_size=224))
     dataset_loaders["test"] = torch.utils.data.DataLoader(dataset_list, batch_size=4, shuffle=False, num_workers=args.num_workers)
@@ -154,10 +155,14 @@ if __name__ == '__main__':
     # network construction
     feature_len = 2048
     # fine-grained feature extractor + fine-grained label predictor
+    devices = list(range(torch.cuda.device_count()))
+    model_fc = model_no.Resnet50Fc()
+    model_fc = model_fc.to(device)
+    model_fc = nn.DataParallel(model_fc, device_ids=devices)
     my_fine_net = fine_net(feature_len)
     my_fine_net = my_fine_net.to(device)
     my_fine_net.train(True)
-
+    model_fc.train(True)
 
     # criterion and optimizer
     criterion = {
@@ -167,7 +172,7 @@ if __name__ == '__main__':
     }
 
     optimizer_dict = [
-        {"params": filter(lambda p: p.requires_grad, my_fine_net.model_fc.parameters()), "lr": 0.1},
+        {"params": filter(lambda p: p.requires_grad, model_fc.parameters()), "lr": 0.1},
         {"params": filter(lambda p: p.requires_grad, my_fine_net.bottleneck_layer.parameters()), "lr": 1},
         {"params": filter(lambda p: p.requires_grad, my_fine_net.classifier_layer.parameters()), "lr": 1}
     ]
@@ -189,7 +194,8 @@ if __name__ == '__main__':
     if args.mode=="ldada":
         from generate_domains import generate_domains
         domain_probs = generate_domains(args.num_domains,dataset_loaders["train"], args.cluster_ckpt, device)
-    for iter_num in range(1, args.max_iteration + 1):
+    for iter_num in range(1, int(args.max_iteration) + 1):
+        model_fc.train(True)
         my_fine_net.train(True)
         optimizer = inv_lr_scheduler(param_lr, optimizer, iter_num, init_lr=args.lr, gamma=0.001, power=0.75)
         optimizer.zero_grad()
@@ -208,11 +214,11 @@ if __name__ == '__main__':
         fine_labels_source_cpu = labels_source.view(-1, 1)
         labels_source = labels_source.to(device)
         idxes_src = idxes_src.long().to(device)
-
+        features = model_fc(inputs)
         if args.msda_raw_feat:
-            features_btnk, logits_fine, _ = my_fine_net(inputs)
+            features_btnk, logits_fine, _ = my_fine_net(features)
         else:
-            _, logits_fine,features_btnk = my_fine_net(inputs)
+            _, logits_fine,features_btnk = my_fine_net(features)
         features_src = features_btnk.narrow(0, 0, batch_size["train"])
         features_tgt = features_btnk.narrow(0, batch_size["train"], batch_size["train"])
         if args.mode=="msda":
@@ -250,7 +256,8 @@ if __name__ == '__main__':
             print(iter_num)
         if iter_num % test_interval == 0:
             my_fine_net.eval()
-            test_acc = test_target(dataset_loaders, my_fine_net)
+            model_fc.eval()
+            test_acc = test_target(dataset_loaders, my_fine_net, model_fc)
             print('test_acc:%.4f'%(test_acc))
 
             print("Iter {:05d}, Average Fine Cross Entropy Loss: {:.4f}; "
