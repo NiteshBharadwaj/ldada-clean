@@ -192,7 +192,7 @@ if __name__ == '__main__':
     len_target = len(dataset_loaders["val"]) - 1
     iter_source = iter(dataset_loaders["train"])
     iter_target = iter(dataset_loaders["val"])
-    if args.mode=="ldada":
+    if args.mode=="ldada" or args.mode=="mmd_soft":
         from generate_domains import generate_domains
         domain_probs = generate_domains(args.num_domains,dataset_loaders["train"], args.cluster_ckpt, device)
     for iter_num in range(1, int(args.max_iteration) + 1):
@@ -233,6 +233,7 @@ if __name__ == '__main__':
             transfer_loss = mmd.mmd(features_src, features_tgt)
             transfer_loss = transfer_loss * args.msda_wt
         elif args.mode=="mmd_soft":
+            batch_domain_probs = domain_probs[idxes_src].to(device)
             transfer_loss = mmd.mmd_soft(features_src, features_tgt,batch_domain_probs)
             transfer_loss = transfer_loss * args.msda_wt
         else:
