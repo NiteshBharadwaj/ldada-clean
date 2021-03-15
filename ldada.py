@@ -109,6 +109,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--cluster_ckpt', type=str, nargs='?', default='', help="Checkpoint for cluster probabilities")
     parser.add_argument('--num_domains', type=int, nargs='?', default=3, help="num_domains")
+    parser.add_argument('--records', type=str, nargs='?', default='/data-birds/results', help="expt_name")
+    parser.add_argument('--expt_name', type=str, nargs='?', default='test', help="expt_name")
 
     args = parser.parse_args()
 
@@ -259,15 +261,8 @@ if __name__ == '__main__':
         train_transfer_loss += transfer_loss.item()
 
         # test
-        test_interval = 500
-        if iter_num%10==0:
-            print(iter_num)
-        if iter_num % test_interval == 0:
-            my_fine_net.eval()
-            model_fc.eval()
-            test_acc = test_target(dataset_loaders, my_fine_net, model_fc)
-            print('test_acc:%.4f'%(test_acc))
-
+        print_interval = 500
+        if iter_num % print_interval == 0:
             print("Iter {:05d}, Average Fine Cross Entropy Loss: {:.4f}; "
                   "Average Transfer Loss: {:.4f}; "
                   "Average Entropy Loss Source: {:.4f}; "
@@ -287,4 +282,19 @@ if __name__ == '__main__':
             train_entropy_loss_source = 0.0
             train_entropy_loss_target = 0.0
             train_total_loss = 0.0
-
+    my_fine_net.eval()
+    model_fc.eval()
+    test_acc = test_target(dataset_loaders, my_fine_net, model_fc)
+    print('test_acc:%.4f' % (test_acc))
+    final_ckpt = {}
+    final_ckpt["model_fc"] = model_fc.module.get_state_dict()
+    final_ckpt["my_fine_net"] = my_fine_net.get_state_dict()
+    final_ckpt["acc"] = test_acc
+    final_ckpt["num_domains"] = args.num_domains
+    final_ckpt["lr"] = args.lr
+    final_ckpt["num_iterations"] = args.max_iteration
+    records_dir = os.path.join(args.records,args.expt_name)
+    if not os.path.exists(records_dir):
+        os.makedirs(records_dir)
+    checkpoint_name = os.path.join(records_dir,"final_model.pth")
+    torch.save(checkpoint_name, final_ckpt)
